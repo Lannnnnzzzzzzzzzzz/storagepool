@@ -1,0 +1,6 @@
+{
+  "name": "StoragePool",
+  "description": "Multi-Account Cloud Storage Pooling System using Cloudflare R2 and Supabase",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
