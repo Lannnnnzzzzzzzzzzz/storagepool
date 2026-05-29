@@ -123,10 +123,19 @@ class DashboardViewModel(
                 val filesJob = storageRepository.fetchFiles()
 
                 if (bucketsJob.isSuccess && filesJob.isSuccess) {
+                    val rawBuckets = bucketsJob.getOrDefault(emptyList())
+                    val files = filesJob.getOrDefault(emptyList())
+
+                    // Reconcile storage capacity: calculate actual used space from file metadata
+                    val reconciledBuckets = rawBuckets.map { b ->
+                        val calculatedUsedBytes = files.filter { it.bucketId == b.id }.sumOf { it.fileSize }
+                        b.copy(usedBytes = calculatedUsedBytes)
+                    }
+
                     _state.value = _state.value.copy(
                         isLoading = false,
-                        buckets = bucketsJob.getOrDefault(emptyList()),
-                        allFiles = filesJob.getOrDefault(emptyList())
+                        buckets = reconciledBuckets,
+                        allFiles = files
                     )
                     refreshCurrentFolderNode()
                 } else {
@@ -136,6 +145,52 @@ class DashboardViewModel(
                         error = "Failed to sync metadata. Please verify your Supabase Connection credentials in Secrets panel.\n\nError: $errMsg"
                     )
                 }
+            }
+        }
+    }
+
+    fun addBucket(
+        bucketName: String,
+        endpoint: String,
+        accessKeyId: String,
+        secretAccessKey: String,
+        totalQuotaBytes: Long,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (isDemoMode) {
+            val newBucket = StorageBucket(
+                id = "mock-" + UUID.randomUUID().toString().take(6),
+                bucketName = bucketName.trim(),
+                endpoint = endpoint.trim(),
+                accessKeyId = accessKeyId.trim(),
+                secretAccessKey = secretAccessKey.trim(),
+                totalQuotaBytes = totalQuotaBytes,
+                usedBytes = 0,
+                status = "ACTIVE"
+            )
+            _state.value = _state.value.copy(
+                buckets = _state.value.buckets + newBucket
+            )
+            onSuccess()
+            return
+        }
+        
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            val result = storageRepository.addBucket(
+                bucketName = bucketName,
+                endpoint = endpoint,
+                accessKeyId = accessKeyId,
+                secretAccessKey = secretAccessKey,
+                totalQuotaBytes = totalQuotaBytes
+            )
+            _state.value = _state.value.copy(isLoading = false)
+            if (result.isSuccess) {
+                loadStoragePool()
+                onSuccess()
+            } else {
+                onError(result.exceptionOrNull()?.message ?: "Gagal mendaftarkan Node bucket fisik")
             }
         }
     }
@@ -178,7 +233,9 @@ class DashboardViewModel(
             if (currentPath.isEmpty()) {
                 // Root level
                 if (!fp.contains('/')) {
-                    folderFiles.add(file)
+                    if (file.filename != ".keep") {
+                        folderFiles.add(file)
+                    }
                 } else {
                     val rootDir = fp.substringBefore('/')
                     subFolders.add(rootDir)
@@ -188,7 +245,9 @@ class DashboardViewModel(
                 if (fp.startsWith("$currentPath/")) {
                     val relativePath = fp.removePrefix("$currentPath/")
                     if (!relativePath.contains('/')) {
-                        folderFiles.add(file)
+                        if (file.filename != ".keep") {
+                            folderFiles.add(file)
+                        }
                     } else {
                         val subDirName = relativePath.substringBefore('/')
                         subFolders.add(subDirName)
@@ -201,6 +260,91 @@ class DashboardViewModel(
             currentFolderFiles = folderFiles.sortedBy { it.filename },
             currentSubfolders = subFolders.sorted()
         )
+    }
+
+    // Dynamic virtual directory creation using 0-byte placeholder kept files
+    fun createFolder(folderName: String) {
+        val cleanFolderName = folderName.trim().removeSuffix("/")
+        if (cleanFolderName.isEmpty()) return
+
+        val currentRelPath = _state.value.currentPath
+        val folderPath = if (currentRelPath.isEmpty()) cleanFolderName else "$currentRelPath/$cleanFolderName"
+        val fullPath = "$folderPath/.keep"
+
+        _state.value = _state.value.copy(
+            isUploading = true,
+            uploadProgress = 0f,
+            uploadBucketName = "Smart Router (Analyzing Pool...)",
+            uploadFailovers = emptyList(),
+            uploadStatusMessage = "Creating directory placeholder..."
+        )
+
+        viewModelScope.launch {
+            if (isDemoMode) {
+                delay(800)
+                val safeFileId = "sim-folder-${UUID.randomUUID().toString().take(6)}"
+                val newCloudFile = CloudFile(
+                    id = safeFileId,
+                    userId = "demo-user",
+                    filename = ".keep",
+                    filePath = fullPath,
+                    fileSize = 0L,
+                    mimeType = "application/octet-stream",
+                    bucketId = "bucket-1",
+                    isEncrypted = false
+                )
+                _state.value = _state.value.copy(
+                    isUploading = false,
+                    allFiles = _state.value.allFiles + newCloudFile,
+                    uploadStatusMessage = null
+                )
+                refreshCurrentFolderNode()
+            } else {
+                try {
+                    storageRepository.uploadFile(
+                        filename = ".keep",
+                        filePath = fullPath,
+                        fileSize = 0L,
+                        mimeType = "application/octet-stream",
+                        fileBytes = ByteArray(0),
+                        isEncrypted = false
+                    ).collect { status ->
+                        when (status) {
+                            is UploadStatus.Idle -> {
+                                _state.value = _state.value.copy(
+                                    uploadStatusMessage = "Initializing directory placeholder..."
+                                )
+                            }
+                            is UploadStatus.Progress -> {
+                                _state.value = _state.value.copy(
+                                    uploadStatusMessage = "Writing directory marker in ${status.currentBucketName}..."
+                                )
+                            }
+                            is UploadStatus.Success -> {
+                                _state.value = _state.value.copy(
+                                    isUploading = false,
+                                    uploadStatusMessage = null
+                                )
+                                loadStoragePool()
+                            }
+                            is UploadStatus.Error -> {
+                                _state.value = _state.value.copy(
+                                    isUploading = false,
+                                    error = status.message,
+                                    uploadStatusMessage = null
+                                )
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    _state.value = _state.value.copy(
+                        isUploading = false,
+                        error = e.message ?: "Gagal membuat folder",
+                        uploadStatusMessage = null
+                    )
+                }
+            }
+        }
     }
 
     // Real-Time Upload with Automatic Smart Pooling Failover Triggering
@@ -267,56 +411,65 @@ class DashboardViewModel(
                 refreshCurrentFolderNode()
             } else {
                 // Real DB execution collects Flow stream securely
-                storageRepository.uploadFile(
-                    filename = filename,
-                    filePath = filePath,
-                    fileSize = fileBytes.size.toLong(),
-                    mimeType = mimeType,
-                    fileBytes = fileBytes,
-                    isEncrypted = isEncrypted
-                ).collect { status ->
-                    when (status) {
-                        is UploadStatus.Idle -> {
-                            _state.value = _state.value.copy(
-                                uploadStatusMessage = "Initializing direct binary chunk stream..."
-                            )
-                        }
-                        is UploadStatus.Progress -> {
-                            val activeBucket = status.currentBucketName
-                            val failoverList = if (_state.value.uploadBucketName.isNotEmpty() && 
-                                _state.value.uploadBucketName != "Smart Router (Analyzing Pool...)" && 
-                                _state.value.uploadBucketName != activeBucket) {
-                                // A change of active target bucket during progress indicates failover retrying occurred!
-                                _state.value.uploadFailovers + _state.value.uploadBucketName
-                            } else {
-                                _state.value.uploadFailovers
+                try {
+                    storageRepository.uploadFile(
+                        filename = filename,
+                        filePath = filePath,
+                        fileSize = fileBytes.size.toLong(),
+                        mimeType = mimeType,
+                        fileBytes = fileBytes,
+                        isEncrypted = isEncrypted
+                    ).collect { status ->
+                        when (status) {
+                            is UploadStatus.Idle -> {
+                                _state.value = _state.value.copy(
+                                    uploadStatusMessage = "Initializing direct binary chunk stream..."
+                                )
                             }
+                            is UploadStatus.Progress -> {
+                                val activeBucket = status.currentBucketName
+                                val failoverList = if (_state.value.uploadBucketName.isNotEmpty() && 
+                                    _state.value.uploadBucketName != "Smart Router (Analyzing Pool...)" && 
+                                    _state.value.uploadBucketName != activeBucket) {
+                                    // A change of active target bucket during progress indicates failover retrying occurred!
+                                    _state.value.uploadFailovers + _state.value.uploadBucketName
+                                } else {
+                                    _state.value.uploadFailovers
+                                }
 
-                            _state.value = _state.value.copy(
-                                uploadProgress = status.percentage,
-                                uploadBucketName = activeBucket,
-                                uploadFailovers = failoverList,
-                                uploadStatusMessage = "Direct binary transfer to '$activeBucket' at ${(status.percentage * 100).toInt()}%"
-                            )
-                        }
-                        is UploadStatus.Success -> {
-                            // Reload files and buckets from network
-                            _state.value = _state.value.copy(
-                                isUploading = false,
-                                uploadProgress = 0f,
-                                uploadStatusMessage = null
-                            )
-                            loadStoragePool()
-                        }
-                        is UploadStatus.Error -> {
-                            _state.value = _state.value.copy(
-                                isUploading = false,
-                                uploadProgress = 0f,
-                                error = status.message,
-                                uploadStatusMessage = null
-                            )
+                                _state.value = _state.value.copy(
+                                    uploadProgress = status.percentage,
+                                    uploadBucketName = activeBucket,
+                                    uploadFailovers = failoverList,
+                                    uploadStatusMessage = "Direct binary transfer to '$activeBucket' at ${(status.percentage * 100).toInt()}%"
+                                )
+                            }
+                            is UploadStatus.Success -> {
+                                // Reload files and buckets from network
+                                _state.value = _state.value.copy(
+                                    isUploading = false,
+                                    uploadProgress = 0f,
+                                    uploadStatusMessage = null
+                                )
+                                loadStoragePool()
+                            }
+                            is UploadStatus.Error -> {
+                                _state.value = _state.value.copy(
+                                    isUploading = false,
+                                    uploadProgress = 0f,
+                                    error = status.message,
+                                    uploadStatusMessage = null
+                                )
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    _state.value = _state.value.copy(
+                        isUploading = false,
+                        uploadProgress = 0f,
+                        error = e.message ?: "Unexpected upload error occurred",
+                        uploadStatusMessage = null
+                    )
                 }
             }
         }

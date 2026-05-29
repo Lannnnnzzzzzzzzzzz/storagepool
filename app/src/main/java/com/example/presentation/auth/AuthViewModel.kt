@@ -64,7 +64,14 @@ class AuthViewModel(private val authRepository: AuthRepository) : ViewModel() {
                     _uiState.value = AuthUiState.Success(session)
                 },
                 onFailure = { error ->
-                    _uiState.value = AuthUiState.Error(error.message ?: "Registration failed")
+                    val finalMsg = if (error.message == "VERIFICATION_REQUIRED") {
+                        "Registrasi Berhasil! Namun, proyek Supabase Anda mewajibkan Konfirmasi Email (Confirm Email).\n\n" +
+                        "1. Silakan periksa kotak masuk/spam email Anda untuk memverifikasi akun.\n" +
+                        "2. Atau, jika ingin masuk langsung tanpa verifikasi email, silakan buka Dashboard Supabase Anda -> Authentication -> Providers -> Email -> nonaktifkan (disable) 'Confirm email'."
+                    } else {
+                        error.message ?: "Registrasi gagal"
+                    }
+                    _uiState.value = AuthUiState.Error(finalMsg)
                 }
             )
         }

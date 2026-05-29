@@ -6,6 +6,30 @@ plugins {
   alias(libs.plugins.secrets)
 }
 
+// Automatically synchronize credentials from AI Studio Secrets environment into root .env
+val envFile = rootProject.file(".env")
+val supabaseUrl = System.getenv("SUPABASE_URL") ?: ""
+val supabaseAnonKey = System.getenv("SUPABASE_ANON_KEY") ?: ""
+val geminiApiKey = System.getenv("GEMINI_API_KEY") ?: ""
+
+logger.lifecycle("StoragePool: envFile path = ${envFile.absolutePath}")
+
+if (supabaseUrl.isNotEmpty() || supabaseAnonKey.isNotEmpty() || geminiApiKey.isNotEmpty()) {
+    val newContent = """
+        SUPABASE_URL=$supabaseUrl
+        SUPABASE_ANON_KEY=$supabaseAnonKey
+        GEMINI_API_KEY=$geminiApiKey
+    """.trimIndent()
+    envFile.writeText(newContent)
+    logger.lifecycle("StoragePool: Successfully synchronized AI Studio environment variables to root .env")
+} else if (!envFile.exists()) {
+    val exampleFile = rootProject.file(".env.example")
+    if (exampleFile.exists()) {
+        exampleFile.copyTo(envFile, overwrite = true)
+        logger.lifecycle("StoragePool: Root .env generated from .env.example fallback")
+    }
+}
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }

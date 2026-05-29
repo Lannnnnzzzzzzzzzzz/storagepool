@@ -7,20 +7,23 @@ interface SupabaseDbApi {
     @GET("rest/v1/storage_buckets")
     suspend fun getBuckets(): Response<List<BucketDto>>
 
+    @POST("rest/v1/storage_buckets")
+    suspend fun insertBucket(@Body bucket: BucketDto): Response<List<BucketDto>>
+
     @PATCH("rest/v1/storage_buckets")
     suspend fun updateBucketUsedSize(
         @Query("id") idFilter: String, // e.g. "eq.uuid"
         @Body update: BucketSizeUpdateDto
-    ): Response<Unit>
+    ): Response<List<BucketDto>>
 
     @GET("rest/v1/files")
     suspend fun getFiles(): Response<List<FileDto>>
 
     @POST("rest/v1/files")
-    suspend fun insertFile(@Body file: FileDto): Response<FileDto>
+    suspend fun insertFile(@Body file: FileDto): Response<List<FileDto>>
 
     @DELETE("rest/v1/files")
     suspend fun deleteFile(
         @Query("id") idFilter: String // e.g. "eq.uuid"
-    ): Response<Unit>
+    ): Response<List<FileDto>>
 }

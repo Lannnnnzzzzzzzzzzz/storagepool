@@ -17,8 +17,10 @@ object S3Signer {
         filePath: String,
         accessKeyId: String,
         secretAccessKey: String,
-        region: String = "us-east-1",
-        expiresSeconds: Long = 3600
+        region: String = "auto",
+        expiresSeconds: Long = 3600,
+        method: String = "PUT",
+        contentType: String? = null
     ): String {
         try {
             // Normalize endpoint and construct base URL
@@ -37,7 +39,10 @@ object S3Signer {
             val fullHost = host + portStr
             
             // For R2 bucket-in-path: uriPath starts with /<bucket>/<filepath>
+            // We must properly URL-encode the path segments for modern S3 compatibility.
             val uriPath = "/$bucketName/$cleanFilePath"
+                .split("/")
+                .joinToString("/") { encryptUrlComponent(it) }
             
             // Timestamps
             val now = Date()
@@ -53,28 +58,39 @@ object S3Signer {
             
             val credentialScope = "$dateStamp/$region/s3/aws4_request"
             
+            // Signed headers: content-type comes before host alphabetically
+            val signedHeaders = if (!contentType.isNullOrEmpty()) {
+                "content-type;host"
+            } else {
+                "host"
+            }
+            
             // Build query parameters (must be sorted alphabetically for canonical query string)
             val queryParams = sortedMapOf(
                 "X-Amz-Algorithm" to "AWS4-HMAC-SHA256",
+                "X-Amz-Content-Sha256" to "UNSIGNED-PAYLOAD",
                 "X-Amz-Credential" to "$accessKeyId/$credentialScope",
                 "X-Amz-Date" to amzDate,
                 "X-Amz-Expires" to expiresSeconds.toString(),
-                "X-Amz-SignedHeaders" to "host"
+                "X-Amz-SignedHeaders" to signedHeaders
             )
             
             val canonicalQueryString = queryParams.map { (key, value) ->
                 "${encryptUrlComponent(key)}=${encryptUrlComponent(value)}"
             }.joinToString("&")
             
-            // Canonical Headers
-            val canonicalHeaders = "host:$fullHost\n"
-            val signedHeaders = "host"
+            // Canonical Headers (sorted alphabetically)
+            val canonicalHeaders = if (!contentType.isNullOrEmpty()) {
+                "content-type:${contentType.trim().lowercase()}\nhost:$fullHost\n"
+            } else {
+                "host:$fullHost\n"
+            }
             
             // Payload hash for GET/PUT is "UNSIGNED-PAYLOAD" for presigned URLs
             val payloadHash = "UNSIGNED-PAYLOAD"
             
             // Canonical Request
-            val canonicalRequest = "PUT\n" +
+            val canonicalRequest = "$method\n" +
                     "$uriPath\n" +
                     "$canonicalQueryString\n" +
                     "$canonicalHeaders\n" +

@@ -10,6 +10,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+import com.example.data.remote.SessionDto
+import com.example.data.remote.UserDto
+
 class AuthRepositoryImpl(context: Context) : AuthRepository {
     private val sharedPrefs = context.getSharedPreferences("storage_pool_prefs", Context.MODE_PRIVATE)
 
@@ -43,18 +46,45 @@ class AuthRepositoryImpl(context: Context) : AuthRepository {
         return try {
             val response = SupabaseClient.authApi.signUp(AuthRequest(email, password))
             if (response.isSuccessful) {
-                val sessionDto = response.body() ?: throw Exception("Registration returned empty session body")
-                val session = UserSession(
-                    accessToken = sessionDto.accessToken,
-                    userId = sessionDto.user.id,
-                    email = sessionDto.user.email ?: email
-                )
-                saveSession(session)
-                Result.success(session)
+                val rawBody = response.body()?.string() ?: throw Exception("Registration returned empty session body")
+                Log.d("AuthRepository", "Sign Up response: $rawBody")
+
+                if (rawBody.contains("access_token")) {
+                    val sessionDto = try {
+                        val adapter = SupabaseClient.moshi.adapter(SessionDto::class.java)
+                        adapter.fromJson(rawBody)
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (sessionDto != null) {
+                        val session = UserSession(
+                            accessToken = sessionDto.accessToken,
+                            userId = sessionDto.user.id,
+                            email = sessionDto.user.email ?: email
+                        )
+                        saveSession(session)
+                        return Result.success(session)
+                    }
+                }
+
+                // If "access_token" is not present, check if it's a valid UserDto (meaning email confirmation on)
+                val isUserDto = rawBody.contains("id") && rawBody.contains("email")
+                if (isUserDto) {
+                    throw Exception("VERIFICATION_REQUIRED")
+                } else {
+                    throw Exception("Berhasil terdaftar, tetapi tidak ada token akses yang diterima. Silakan cek email Anda untuk verifikasi.")
+                }
             } else {
                 val errorMsg = response.errorBody()?.string() ?: "Unknown registration failure"
                 Log.e("AuthRepository", "Sign Up failed response: $errorMsg")
-                Result.failure(Exception(errorMsg))
+                val cleanErrorMsg = try {
+                    val adapter = SupabaseClient.moshi.adapter(Map::class.java)
+                    val map = adapter.fromJson(errorMsg)
+                    map?.get("msg")?.toString() ?: errorMsg
+                } catch (e: Exception) {
+                    errorMsg
+                }
+                Result.failure(Exception(cleanErrorMsg))
             }
         } catch (e: Exception) {
             Log.e("AuthRepository", "Sign Up exception: ${e.message}", e)

@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.util.Log
+import com.example.data.remote.BucketDto
 import com.example.data.remote.BucketSizeUpdateDto
 import com.example.data.remote.FileDto
 import com.example.data.remote.SupabaseClient
@@ -11,9 +12,11 @@ import com.example.domain.repository.StorageRepository
 import com.example.domain.repository.UploadStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -31,8 +34,8 @@ class StorageRepositoryImpl : StorageRepository {
     private val KEY_ALGORITHM = "AES"
     private val CIPHER_TRANSFORMATION = "AES/CBC/PKCS5Padding"
 
-    override suspend fun fetchBuckets(): Result<List<StorageBucket>> {
-        return try {
+    override suspend fun fetchBuckets(): Result<List<StorageBucket>> = withContext(Dispatchers.IO) {
+        try {
             val response = SupabaseClient.dbApi.getBuckets()
             if (response.isSuccessful) {
                 val bucketDtos = response.body() ?: emptyList()
@@ -60,8 +63,8 @@ class StorageRepositoryImpl : StorageRepository {
         }
     }
 
-    override suspend fun fetchFiles(): Result<List<CloudFile>> {
-        return try {
+    override suspend fun fetchFiles(): Result<List<CloudFile>> = withContext(Dispatchers.IO) {
+        try {
             val response = SupabaseClient.dbApi.getFiles()
             if (response.isSuccessful) {
                 val fileDtos = response.body() ?: emptyList()
@@ -96,14 +99,14 @@ class StorageRepositoryImpl : StorageRepository {
         mimeType: String,
         fileBytes: ByteArray,
         isEncrypted: Boolean
-    ): Flow<UploadStatus> = flow {
-        emit(UploadStatus.Idle)
+    ): Flow<UploadStatus> = channelFlow {
+        send(UploadStatus.Idle)
 
         // 1. Fetch available buckets to build the smart storage pool
         val bucketsResult = fetchBuckets()
         if (bucketsResult.isFailure) {
-            emit(UploadStatus.Error("Failed to fetch storage buckets configuration: ${bucketsResult.exceptionOrNull()?.message}"))
-            return@flow
+            send(UploadStatus.Error("Failed to fetch storage buckets configuration: ${bucketsResult.exceptionOrNull()?.message}"))
+            return@channelFlow
         }
 
         val allBuckets = bucketsResult.getOrDefault(emptyList())
@@ -114,8 +117,8 @@ class StorageRepositoryImpl : StorageRepository {
         }.sortedBy { it.usedBytes } // Smart Routing: Optimal bucket (least used) is first!
 
         if (eligibleBuckets.isEmpty()) {
-            emit(UploadStatus.Error("No available buckets in pool. Either all buckets are full/down or file size exceeds available pool space."))
-            return@flow
+            send(UploadStatus.Error("No available buckets in pool. Either all buckets are full/down or file size exceeds available pool space."))
+            return@channelFlow
         }
 
         // Preparation: handle client side encryption if isEncrypted is enabled
@@ -125,8 +128,8 @@ class StorageRepositoryImpl : StorageRepository {
                 finalBytesToUpload = encryptBytes(fileBytes)
                 Log.d("StorageRepository", "Encrypting file. Size inflated from ${fileBytes.size} to ${finalBytesToUpload.size} bytes.")
             } catch (encryptEx: Exception) {
-                emit(UploadStatus.Error("Encryption failed: ${encryptEx.message}"))
-                return@flow
+                send(UploadStatus.Error("Encryption failed: ${encryptEx.message}"))
+                return@channelFlow
             }
         }
 
@@ -138,7 +141,10 @@ class StorageRepositoryImpl : StorageRepository {
             Log.d("StorageRepository", "Attempt routing to Buckets Pool: '${bucket.bucketName}' (Available space: ${bucket.availableSpaceBytes} bytes)")
             
             try {
-                emit(UploadStatus.Progress(0.01f, bucket.bucketName))
+                send(UploadStatus.Progress(0.01f, bucket.bucketName))
+
+                // Normalize mimeType to prevent cases and blank mismatch errors
+                val resolvedMimeType = if (mimeType.isNullOrBlank()) "application/octet-stream" else mimeType.trim().lowercase()
 
                 // Generate Presigned S3 PUT URL for Cloudflare R2
                 val presignedUrl = S3Signer.generatePresignedUrl(
@@ -146,22 +152,22 @@ class StorageRepositoryImpl : StorageRepository {
                     bucketName = bucket.bucketName,
                     filePath = filePath,
                     accessKeyId = bucket.accessKeyId,
-                    secretAccessKey = bucket.secretAccessKey
+                    secretAccessKey = bucket.secretAccessKey,
+                    contentType = resolvedMimeType // Sign content-type so it matches OkHttp's headers perfectly
                 )
 
                 // Binary PUT stream using customized OkHttp streaming request body with live progress reporting
-                val targetMediaType = mimeType.toMediaTypeOrNull()
+                val targetMediaType = resolvedMimeType.toMediaTypeOrNull()
                 val streamingBody = StreamingRequestBody(targetMediaType, finalBytesToUpload) { progressFraction ->
                     // Guard progress bounds
                     val verifiedProgress = progressFraction.coerceIn(0.01f, 0.99f)
-                    // Emit progress
-                    runBlocking {
-                        emit(UploadStatus.Progress(verifiedProgress, bucket.bucketName))
-                    }
+                    // Send progress safely
+                    trySend(UploadStatus.Progress(verifiedProgress, bucket.bucketName))
                 }
 
                 val putRequest = Request.Builder()
                     .url(presignedUrl)
+                    .header("Content-Type", resolvedMimeType)
                     .put(streamingBody)
                     .build()
 
@@ -175,7 +181,7 @@ class StorageRepositoryImpl : StorageRepository {
                         filename = filename,
                         filePath = filePath,
                         fileSize = finalBytesToUpload.size.toLong(),
-                        mimeType = mimeType,
+                        mimeType = resolvedMimeType,
                         bucketId = bucket.id,
                         isEncrypted = isEncrypted
                     )
@@ -184,8 +190,7 @@ class StorageRepositoryImpl : StorageRepository {
                     val insertResponse = SupabaseClient.dbApi.insertFile(fileDto)
                     if (insertResponse.isSuccessful) {
                         val savedDtoList = insertResponse.body()
-                        // Some endpoints might return single object or the representation array, handle safely
-                        val savedFileDto = savedDtoList ?: fileDto
+                        val savedFileDto = savedDtoList?.firstOrNull() ?: fileDto
 
                         // Update local bucket storage allocation in primary Supabase buckets register
                         val updatedBytes = bucket.usedBytes + finalBytesToUpload.size
@@ -208,8 +213,8 @@ class StorageRepositoryImpl : StorageRepository {
                             bucketId = savedFileDto.bucketId,
                             isEncrypted = savedFileDto.isEncrypted
                         )
-                        emit(UploadStatus.Progress(1.0f, bucket.bucketName))
-                        emit(UploadStatus.Success(finalCloudFile))
+                        send(UploadStatus.Progress(1.0f, bucket.bucketName))
+                        send(UploadStatus.Success(finalCloudFile))
                         uploadSuccess = true
                         break // Break retrying loop on successful deployment!
                     } else {
@@ -219,7 +224,9 @@ class StorageRepositoryImpl : StorageRepository {
                 } else {
                     val code = callResponse.code
                     val msg = callResponse.message
-                    throw Exception("S3/R2 Server rejected stream payload (HTTP $code: $msg)")
+                    val errorBody = callResponse.body?.string() ?: ""
+                    Log.e("StorageRepository", "R2 S3 API rejected stream! HTTP Code $code: $msg. Response Body: $errorBody")
+                    throw Exception("S3/R2 Server rejected stream payload (HTTP $code: $msg). Details: $errorBody")
                 }
             } catch (e: Exception) {
                 lastError = e.message ?: "Upload streaming error"
@@ -229,12 +236,12 @@ class StorageRepositoryImpl : StorageRepository {
         }
 
         if (!uploadSuccess) {
-            emit(UploadStatus.Error("Failed to upload file. Retried all optimal buckets. Last Error: $lastError"))
+            send(UploadStatus.Error("Failed to upload file. Retried all optimal buckets. Last Error: $lastError"))
         }
     }.flowOn(Dispatchers.IO)
 
-    override suspend fun deleteFile(fileId: String, bucketId: String, filePath: String): Result<Unit> {
-        return try {
+    override suspend fun deleteFile(fileId: String, bucketId: String, filePath: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
             // First select the bucket to get connection credentials to delete it from S3 as well
             val bucketsResult = fetchBuckets()
             if (bucketsResult.isSuccess) {
@@ -249,8 +256,10 @@ class StorageRepositoryImpl : StorageRepository {
                             bucketName = bucketObj.bucketName,
                             filePath = filePath,
                             accessKeyId = bucketObj.accessKeyId,
-                            secretAccessKey = bucketObj.secretAccessKey
-                        ).replace("X-Amz-Expires=3600", "X-Amz-Expires=600") // lower expiry for custom deletion method
+                            secretAccessKey = bucketObj.secretAccessKey,
+                            expiresSeconds = 600,
+                            method = "DELETE"
+                        )
                         
                         val httpDelete = Request.Builder()
                             .url(deleteUrl)
@@ -275,6 +284,50 @@ class StorageRepositoryImpl : StorageRepository {
             }
         } catch (e: Exception) {
             Log.e("StorageRepository", "deleteFile exception: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun addBucket(
+        bucketName: String,
+        endpoint: String,
+        accessKeyId: String,
+        secretAccessKey: String,
+        totalQuotaBytes: Long
+    ): Result<StorageBucket> = withContext(Dispatchers.IO) {
+        try {
+            val bucketDto = BucketDto(
+                id = java.util.UUID.randomUUID().toString(),
+                bucketName = bucketName.trim(),
+                endpoint = endpoint.trim(),
+                accessKeyId = accessKeyId.trim(),
+                secretAccessKey = secretAccessKey.trim(),
+                totalQuotaBytes = totalQuotaBytes,
+                usedBytes = 0,
+                status = "ACTIVE"
+            )
+            val response = SupabaseClient.dbApi.insertBucket(bucketDto)
+            if (response.isSuccessful) {
+                val inserted = response.body()?.firstOrNull() ?: bucketDto
+                Result.success(
+                    StorageBucket(
+                        id = inserted.id,
+                        bucketName = inserted.bucketName,
+                        endpoint = inserted.endpoint,
+                        accessKeyId = inserted.accessKeyId,
+                        secretAccessKey = inserted.secretAccessKey,
+                        totalQuotaBytes = inserted.totalQuotaBytes,
+                        usedBytes = inserted.usedBytes,
+                        status = inserted.status
+                    )
+                )
+            } else {
+                val errorMsg = response.errorBody()?.string() ?: "Failed to save bucket to database"
+                Log.e("StorageRepository", "addBucket error: $errorMsg")
+                Result.failure(Exception(errorMsg))
+            }
+        } catch (e: Exception) {
+            Log.e("StorageRepository", "addBucket exception: ${e.message}", e)
             Result.failure(e)
         }
     }

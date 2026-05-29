@@ -56,6 +56,9 @@ fun DashboardScreen(
     val context = LocalContext.current
 
     var showUploadConfigDialog by remember { mutableStateOf(false) }
+    var showRegisterBucketDialog by remember { mutableStateOf(false) }
+    var showCreateFolderDialog by remember { mutableStateOf(false) }
+    var newFolderName by remember { mutableStateOf("") }
     var pickedFileUri by remember { mutableStateOf<Uri?>(null) }
     var pickedFileName by remember { mutableStateOf("") }
     var pickedFileSize by remember { mutableStateOf(0L) }
@@ -109,6 +112,16 @@ fun DashboardScreen(
                 },
                 actions = {
                     IconButton(
+                        onClick = { viewModel.loadStoragePool() },
+                        modifier = Modifier.testTag("refresh_pool_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh Pools",
+                            tint = ElectricCyan
+                        )
+                    }
+                    IconButton(
                         onClick = onSignOut,
                         modifier = Modifier.testTag("sign_out_button")
                     ) {
@@ -145,18 +158,51 @@ fun DashboardScreen(
         },
         floatingActionButton = {
             if (!state.isUploading) {
-                FloatingActionButton(
-                    onClick = { documentPickerLauncher.launch("*/*") },
-                    modifier = Modifier
-                        .testTag("floating_upload_picker_button")
-                        .padding(bottom = 16.dp, end = 8.dp),
-                    containerColor = ElectricCyan,
-                    contentColor = Color(0xFF381E72) // Theme high-contrast text color
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(bottom = 16.dp, end = 8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.FileUpload,
-                        contentDescription = "Import Binary File",
-                        modifier = Modifier.size(26.dp)
+                    // Create Folder Button
+                    ExtendedFloatingActionButton(
+                        onClick = { showCreateFolderDialog = true },
+                        modifier = Modifier.testTag("floating_create_folder_button"),
+                        containerColor = DeepGreySurface,
+                        contentColor = ElectricCyan,
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Default.Folder,
+                                contentDescription = "Buat Folder",
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = "Buat Folder",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                    )
+
+                    // Upload File Button
+                    ExtendedFloatingActionButton(
+                        onClick = { documentPickerLauncher.launch("*/*") },
+                        modifier = Modifier.testTag("floating_upload_picker_button"),
+                        containerColor = ElectricCyan,
+                        contentColor = Color(0xFF381E72),
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Default.FileUpload,
+                                contentDescription = "Import Binary File",
+                                modifier = Modifier.size(22.dp)
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = "Upload File",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
                     )
                 }
             }
@@ -166,11 +212,13 @@ fun DashboardScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(ObsidianBg)
+                .background(ObsidianBg),
+            contentAlignment = Alignment.TopCenter
         ) {
             LazyColumn(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .widthIn(max = 850.dp)
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -183,7 +231,10 @@ fun DashboardScreen(
 
                 // 2. Expandable Active Pools (Individual physical R2 buckets configuration)
                 item {
-                    BucketsAllocationPanel(state = state)
+                    BucketsAllocationPanel(
+                        state = state,
+                        onRegisterBucket = { showRegisterBucketDialog = true }
+                    )
                 }
 
                 // 3. Folder Breadcrumb Navigation row
@@ -195,7 +246,7 @@ fun DashboardScreen(
                     )
                 }
 
-                // 4. Folder Content View (Virtual Subfolders list + Compact grid/list files)
+                // 4. Folder Content View (Virtual Subfolders list with adaptive chunked row layout to prevent double-scroll list nesting)
                 if (state.currentSubfolders.isNotEmpty()) {
                     item {
                         Text(
@@ -205,12 +256,51 @@ fun DashboardScreen(
                                 letterSpacing = 1.sp
                             ),
                             color = TextMuted,
-                            modifier = Modifier.padding(bottom = 4.dp)
+                            modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
                         )
-                        SubfoldersGrid(
-                            folders = state.currentSubfolders,
-                            onFolderClick = { viewModel.navigateTo(it) }
-                        )
+                    }
+
+                    val columns = 2
+                    val folderChunks = state.currentSubfolders.chunked(columns)
+                    items(folderChunks) { chunk ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            chunk.forEach { folder ->
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .background(CardGreySurface, RoundedCornerShape(10.dp))
+                                        .border(1.dp, BorderDark, RoundedCornerShape(10.dp))
+                                        .clickable { viewModel.navigateTo(folder) }
+                                        .padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FolderOpen,
+                                        contentDescription = "Virtual Directory Folder",
+                                        tint = CyberTeal,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = folder,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = PureWhite,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            if (chunk.size < columns) {
+                                repeat(columns - chunk.size) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -334,6 +424,272 @@ fun DashboardScreen(
                     }
                 )
             }
+
+            if (showCreateFolderDialog) {
+                AlertDialog(
+                    onDismissRequest = { 
+                        showCreateFolderDialog = false
+                        newFolderName = ""
+                    },
+                    containerColor = DeepGreySurface,
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Folder,
+                                contentDescription = "New Folder",
+                                tint = ElectricCyan,
+                                modifier = Modifier.size(28.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                text = "Buat Folder Baru",
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    color = PureWhite,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    },
+                    text = {
+                        Column {
+                            Text(
+                                text = "Masukkan nama folder yang ingin dibuat. Folder ini akan dibuat secara virtual di dalam directory aktif.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextMuted,
+                                modifier = Modifier.padding(bottom = 16.dp)
+                            )
+                            OutlinedTextField(
+                                value = newFolderName,
+                                onValueChange = { newFolderName = it },
+                                label = { Text("Nama Folder") },
+                                placeholder = { Text("Contoh: foto-kontrak") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("folder_name_input"),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = PureWhite,
+                                    unfocusedTextColor = PureWhite,
+                                    focusedBorderColor = ElectricCyan,
+                                    unfocusedBorderColor = Color.Gray,
+                                    focusedLabelColor = ElectricCyan,
+                                    unfocusedLabelColor = Color.Gray
+                                )
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (newFolderName.isNotBlank()) {
+                                    viewModel.createFolder(newFolderName)
+                                    showCreateFolderDialog = false
+                                    newFolderName = ""
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan),
+                            modifier = Modifier.testTag("confirm_create_folder_button")
+                        ) {
+                            Text("Buat", color = Color(0xFF381E72), fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = {
+                                showCreateFolderDialog = false
+                                newFolderName = ""
+                            }
+                        ) {
+                            Text("Batal", color = TextMuted)
+                        }
+                    }
+                )
+            }
+
+            if (showRegisterBucketDialog) {
+                var bucketNameInput by remember { mutableStateOf("") }
+                var endpointInput by remember { mutableStateOf("") }
+                var accessKeyIdInput by remember { mutableStateOf("") }
+                var secretAccessKeyInput by remember { mutableStateOf("") }
+                var sizeGbInput by remember { mutableStateOf("10") }
+                var registerError by remember { mutableStateOf<String?>(null) }
+                var isRegistering by remember { mutableStateOf(false) }
+
+                AlertDialog(
+                    onDismissRequest = { 
+                        if (!isRegistering) showRegisterBucketDialog = false 
+                    },
+                    title = {
+                        Text(
+                            text = "Register R2 Storage Node",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            ),
+                            color = ElectricCyan
+                        )
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "Aggregates this physical endpoint to your virtual storage pools cluster dynamically.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextMuted
+                            )
+
+                            OutlinedTextField(
+                                value = bucketNameInput,
+                                onValueChange = { bucketNameInput = it },
+                                label = { Text("Bucket Name") },
+                                placeholder = { Text("e.g. storage-pool-west") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CyberTeal,
+                                    unfocusedBorderColor = BorderDark,
+                                    focusedTextColor = PureWhite,
+                                    unfocusedTextColor = PureWhite
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("bucket_name_node_input")
+                            )
+
+                            OutlinedTextField(
+                                value = endpointInput,
+                                onValueChange = { endpointInput = it },
+                                label = { Text("Endpoint URL") },
+                                placeholder = { Text("https://<account-id>.r2.cloudflarestorage.com") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CyberTeal,
+                                    unfocusedBorderColor = BorderDark,
+                                    focusedTextColor = PureWhite,
+                                    unfocusedTextColor = PureWhite
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("endpoint_node_input")
+                            )
+
+                            OutlinedTextField(
+                                value = accessKeyIdInput,
+                                onValueChange = { accessKeyIdInput = it },
+                                label = { Text("Access Key ID") },
+                                placeholder = { Text("S3 Access Key") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CyberTeal,
+                                    unfocusedBorderColor = BorderDark,
+                                    focusedTextColor = PureWhite,
+                                    unfocusedTextColor = PureWhite
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("access_key_node_input")
+                            )
+
+                            OutlinedTextField(
+                                value = secretAccessKeyInput,
+                                onValueChange = { secretAccessKeyInput = it },
+                                label = { Text("Secret Access Key") },
+                                placeholder = { Text("S3 Secret Key") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CyberTeal,
+                                    unfocusedBorderColor = BorderDark,
+                                    focusedTextColor = PureWhite,
+                                    unfocusedTextColor = PureWhite
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("secret_key_node_input")
+                            )
+
+                            OutlinedTextField(
+                                value = sizeGbInput,
+                                onValueChange = { sizeGbInput = it },
+                                label = { Text("Total Capacity (GB)") },
+                                placeholder = { Text("10") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CyberTeal,
+                                    unfocusedBorderColor = BorderDark,
+                                    focusedTextColor = PureWhite,
+                                    unfocusedTextColor = PureWhite
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("capacity_node_input")
+                            )
+
+                            if (registerError != null) {
+                                Text(
+                                    text = registerError!!,
+                                    color = NeonPink,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (bucketNameInput.isBlank() || endpointInput.isBlank() || 
+                                    accessKeyIdInput.isBlank() || secretAccessKeyInput.isBlank()
+                                ) {
+                                    registerError = "All credential fields are required."
+                                    return@Button
+                                }
+                                val sizeGb = sizeGbInput.toLongOrNull() ?: 10L
+                                if (sizeGb <= 0) {
+                                    registerError = "Quota must be a positive integer."
+                                    return@Button
+                                }
+
+                                isRegistering = true
+                                registerError = null
+                                
+                                viewModel.addBucket(
+                                    bucketName = bucketNameInput.trim(),
+                                    endpoint = endpointInput.trim(),
+                                    accessKeyId = accessKeyIdInput.trim(),
+                                    secretAccessKey = secretAccessKeyInput.trim(),
+                                    totalQuotaBytes = sizeGb * 1024L * 1024L * 1024L,
+                                    onSuccess = {
+                                        isRegistering = false
+                                        showRegisterBucketDialog = false
+                                    },
+                                    onError = { err ->
+                                        isRegistering = false
+                                        registerError = err
+                                    }
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan),
+                            modifier = Modifier.testTag("dialog_confirm_register_bucket")
+                        ) {
+                            if (isRegistering) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = DeepGreySurface)
+                            } else {
+                                Text("Add Node", color = DeepGreySurface, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { showRegisterBucketDialog = false },
+                            enabled = !isRegistering
+                        ) {
+                            Text("Cancel", color = TextMuted)
+                        }
+                    },
+                    containerColor = DeepGreySurface
+                )
+            }
         }
     }
 }
@@ -410,12 +766,12 @@ fun AggregatePoolStatsCard(state: DashboardState) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${state.buckets.filter { it.status == "ACTIVE" }.size} Active R2 Storage Pools Connectors",
+                    text = "${state.buckets.filter { it.status == "ACTIVE" }.size} Active R2",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextMuted
                 )
                 Text(
-                    text = "${state.allFiles.size} Total Objects Synced",
+                    text = "${state.allFiles.size} Objects Synced",
                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                     color = CyberTeal
                 )
@@ -425,7 +781,7 @@ fun AggregatePoolStatsCard(state: DashboardState) {
 }
 
 @Composable
-fun BucketsAllocationPanel(state: DashboardState) {
+fun BucketsAllocationPanel(state: DashboardState, onRegisterBucket: () -> Unit) {
     var isExpanded by remember { mutableStateOf(false) }
 
     Card(
@@ -520,6 +876,31 @@ fun BucketsAllocationPanel(state: DashboardState) {
                                 )
                             }
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Button(
+                        onClick = onRegisterBucket,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CyberTeal.copy(alpha = 0.12f),
+                            contentColor = CyberTeal
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, CyberTeal.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                            .testTag("register_bucket_btn"),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add node",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Register S3 R2 Storage Node",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                        )
                     }
                 }
             }
@@ -620,46 +1001,6 @@ fun FolderBreadcrumbRow(
                     contentDescription = "Up directory level",
                     tint = PureWhite,
                     modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun SubfoldersGrid(folders: List<String>, onFolderClick: (String) -> Unit) {
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = 180.dp)
-            .padding(bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(folders) { folder ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(CardGreySurface, RoundedCornerShape(8.dp))
-                    .border(1.dp, BorderDark, RoundedCornerShape(8.dp))
-                    .clickable { onFolderClick(folder) }
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.FolderOpen,
-                    contentDescription = "Virtual Directory Folder",
-                    tint = CyberTeal,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = folder,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                    color = PureWhite,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -1085,7 +1426,7 @@ private fun readUriBytes(context: Context, uri: Uri): ByteArray? {
         context.contentResolver.openInputStream(uri)?.use { stream ->
             stream.readBytes()
         }
-    } catch (e: Exception) {
+    } catch (e: Throwable) {
         Log.e("Dashboard", "Error reading bytes from URI Stream: ${e.message}", e)
         null
     }

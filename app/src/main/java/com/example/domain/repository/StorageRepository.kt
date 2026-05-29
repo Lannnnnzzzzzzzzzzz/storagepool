@@ -8,6 +8,14 @@ interface StorageRepository {
     suspend fun fetchBuckets(): Result<List<StorageBucket>>
     suspend fun fetchFiles(): Result<List<CloudFile>>
     
+    suspend fun addBucket(
+        bucketName: String,
+        endpoint: String,
+        accessKeyId: String,
+        secretAccessKey: String,
+        totalQuotaBytes: Long
+    ): Result<StorageBucket>
+    
     fun uploadFile(
         filename: String,
         filePath: String,

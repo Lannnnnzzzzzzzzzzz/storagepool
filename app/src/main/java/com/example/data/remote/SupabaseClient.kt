@@ -35,7 +35,7 @@ object SupabaseClient {
         }
     }
 
-    private val moshi: Moshi = Moshi.Builder()
+    val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
         .build()
 
