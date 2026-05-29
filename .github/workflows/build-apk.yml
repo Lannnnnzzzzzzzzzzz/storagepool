@@ -29,7 +29,7 @@ jobs:
         run: |
           if [ ! -f "gradlew" ]; then
             echo "Gradle wrapper tidak ditemukan, membuat wrapper baru..."
-            gradle wrapper --gradle-version 8.10.2
+            gradle wrapper --gradle-version 9.3.1
             chmod +x gradlew
           else
             chmod +x gradlew
