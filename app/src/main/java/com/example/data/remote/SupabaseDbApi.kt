@@ -26,4 +26,9 @@ interface SupabaseDbApi {
     suspend fun deleteFile(
         @Query("id") idFilter: String // e.g. "eq.uuid"
     ): Response<List<FileDto>>
+
+    @DELETE("rest/v1/storage_buckets")
+    suspend fun deleteBucket(
+        @Query("id") idFilter: String // e.g. "eq.uuid"
+    ): Response<List<BucketDto>>
 }

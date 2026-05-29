@@ -509,6 +509,74 @@ class DashboardViewModel(
         }
     }
 
+    // Delete a storage node pool from Supabase Metadata registry
+    fun deleteBucket(bucketId: String) {
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            if (isDemoMode) {
+                delay(800)
+                val renewedBucketsList = _state.value.buckets.filter { it.id != bucketId }
+                val renewedFilesList = _state.value.allFiles.filter { it.bucketId != bucketId }
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    buckets = renewedBucketsList,
+                    allFiles = renewedFilesList
+                )
+                refreshCurrentFolderNode()
+            } else {
+                val deleteResult = storageRepository.deleteBucket(bucketId)
+                if (deleteResult.isSuccess) {
+                    loadStoragePool()
+                } else {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        error = "Gagal menghapus Node: ${deleteResult.exceptionOrNull()?.message}"
+                    )
+                }
+            }
+        }
+    }
+
+    // Delete a virtual directory folder structure recursively
+    fun deleteFolder(folderName: String) {
+        _state.value = _state.value.copy(isLoading = true)
+        val currentRelPath = _state.value.currentPath
+        val prefix = if (currentRelPath.isEmpty()) "$folderName/" else "$currentRelPath/$folderName/"
+        
+        viewModelScope.launch {
+            if (isDemoMode) {
+                delay(800)
+                val renewedFilesList = _state.value.allFiles.filterNot { it.filePath.startsWith(prefix) }
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    allFiles = renewedFilesList
+                )
+                refreshCurrentFolderNode()
+            } else {
+                val filesToDelete = _state.value.allFiles.filter { it.filePath.startsWith(prefix) }
+                var someError = false
+                var errorMsg = ""
+                
+                for (file in filesToDelete) {
+                    val result = storageRepository.deleteFile(file.id, file.bucketId, file.filePath)
+                    if (result.isFailure) {
+                        someError = true
+                        errorMsg = result.exceptionOrNull()?.message ?: "Gagal menghapus berkas '${file.filename}'"
+                    }
+                }
+                
+                if (someError) {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        error = "Gagal menghapus folder sepenuhnya secara eksternal: $errorMsg"
+                    )
+                } else {
+                    loadStoragePool()
+                }
+            }
+        }
+    }
+
     fun clearError() {
         _state.value = _state.value.copy(error = null)
     }

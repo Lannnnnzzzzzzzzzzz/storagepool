@@ -288,6 +288,22 @@ class StorageRepositoryImpl : StorageRepository {
         }
     }
 
+    override suspend fun deleteBucket(bucketId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val response = SupabaseClient.dbApi.deleteBucket("eq.$bucketId")
+            if (response.isSuccessful) {
+                Result.success(Unit)
+            } else {
+                val errorMsg = response.errorBody()?.string() ?: "Gagal menghapus Node dari basis data Supabase"
+                Log.e("StorageRepository", "deleteBucket error: $errorMsg")
+                Result.failure(Exception(errorMsg))
+            }
+        } catch (e: Exception) {
+            Log.e("StorageRepository", "deleteBucket exception: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
     override suspend fun addBucket(
         bucketName: String,
         endpoint: String,
@@ -296,12 +312,99 @@ class StorageRepositoryImpl : StorageRepository {
         totalQuotaBytes: Long
     ): Result<StorageBucket> = withContext(Dispatchers.IO) {
         try {
+            // Clean inputs (extremely helpful to auto-remove leading/trailing spaces and pasted single/double quotes)
+            val cleanBucketName = bucketName.trim().removeSurrounding("'").removeSurrounding("\"").trim()
+            var cleanEndpoint = endpoint.trim().removeSurrounding("'").removeSurrounding("\"").trim()
+            if (!cleanEndpoint.startsWith("http://") && !cleanEndpoint.startsWith("https://")) {
+                cleanEndpoint = "https://$cleanEndpoint"
+            }
+            val cleanAccessKeyId = accessKeyId.trim().removeSurrounding("'").removeSurrounding("\"").trim()
+            val cleanSecretAccessKey = secretAccessKey.trim().removeSurrounding("'").removeSurrounding("\"").trim()
+
+            // 1. Verifikasi kredensial AWS S3 / Cloudflare R2 dengan menaruh sepotong data uji
+            val testFilePath = ".pool_validation_test_${java.util.UUID.randomUUID().toString().take(6)}"
+            val testBytes = "R2-VALIDATION-VERIFY-OK".toByteArray()
+            
+            try {
+                // Buat presigned URL untuk verifikasi PUT
+                val testPutUrl = S3Signer.generatePresignedUrl(
+                    endpoint = cleanEndpoint,
+                    bucketName = cleanBucketName,
+                    filePath = testFilePath,
+                    accessKeyId = cleanAccessKeyId,
+                    secretAccessKey = cleanSecretAccessKey,
+                    method = "PUT",
+                    contentType = "text/plain"
+                )
+                
+                val testRequestBody = object : RequestBody() {
+                    val mediaType = "text/plain".toMediaTypeOrNull()
+                    override fun contentType() = mediaType
+                    override fun contentLength() = testBytes.size.toLong()
+                    override fun writeTo(sink: okio.BufferedSink) {
+                        sink.write(testBytes)
+                    }
+                }
+                
+                val testPutRequest = Request.Builder()
+                    .url(testPutUrl)
+                    .header("Content-Type", "text/plain")
+                    .put(testRequestBody)
+                    .build()
+                
+                httpClient.newCall(testPutRequest).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val responseBody = response.body?.string().orEmpty()
+                        throw Exception("Endpoint S3/R2 mengembalikan kode status error HTTP ${response.code}. Detail: $responseBody")
+                    }
+                }
+                
+                // Jika PUT berhasil, hapus kembali file sementara agar bucket tetap bersih
+                try {
+                    val testDeleteUrl = S3Signer.generatePresignedUrl(
+                        endpoint = cleanEndpoint,
+                        bucketName = cleanBucketName,
+                        filePath = testFilePath,
+                        accessKeyId = cleanAccessKeyId,
+                        secretAccessKey = cleanSecretAccessKey,
+                        method = "DELETE"
+                    )
+                    val testDeleteRequest = Request.Builder()
+                        .url(testDeleteUrl)
+                        .delete()
+                        .build()
+                    httpClient.newCall(testDeleteRequest).execute().close()
+                } catch (delEx: Exception) {
+                    Log.w("StorageRepository", "Gagal membersihkan berkas uji validasi: ${delEx.message}")
+                }
+            } catch (e: Exception) {
+                Log.e("StorageRepository", "Gagal mendaftarkan Node: R2/S3 tidak valid", e)
+                val cleanMessage = when {
+                    e.message?.contains("Unable to resolve host") == true || e.message?.contains("No address associated with hostname") == true -> {
+                        "S3 Error: Unable to resolve host (Endpoint URL salah)."
+                    }
+                    e.message?.contains("403") == true -> {
+                        "S3 Error: HTTP 403 Access Denied (Access Key / Secret Key salah)."
+                    }
+                    e.message?.contains("404") == true -> {
+                        "S3 Error: HTTP 404 Not Found (Nama/ID Bucket tidak ditemukan)."
+                    }
+                    else -> {
+                        e.message ?: "Koneksi ke endpoint R2/S3 ditolak."
+                    }
+                }
+                return@withContext Result.failure(Exception(
+                    "Verifikasi gagal: $cleanMessage\nSilakan cek kembali kredensial atau pengaturan CORS Anda."
+                ))
+            }
+
+            // 2. Jika validasi berhasil, simpan ke Database Supabase
             val bucketDto = BucketDto(
                 id = java.util.UUID.randomUUID().toString(),
-                bucketName = bucketName.trim(),
-                endpoint = endpoint.trim(),
-                accessKeyId = accessKeyId.trim(),
-                secretAccessKey = secretAccessKey.trim(),
+                bucketName = cleanBucketName,
+                endpoint = cleanEndpoint,
+                accessKeyId = cleanAccessKeyId,
+                secretAccessKey = cleanSecretAccessKey,
                 totalQuotaBytes = totalQuotaBytes,
                 usedBytes = 0,
                 status = "ACTIVE"
@@ -322,7 +425,7 @@ class StorageRepositoryImpl : StorageRepository {
                     )
                 )
             } else {
-                val errorMsg = response.errorBody()?.string() ?: "Failed to save bucket to database"
+                val errorMsg = response.errorBody()?.string() ?: "Gagal mendaftarkan Node ke basis data Supabase"
                 Log.e("StorageRepository", "addBucket error: $errorMsg")
                 Result.failure(Exception(errorMsg))
             }

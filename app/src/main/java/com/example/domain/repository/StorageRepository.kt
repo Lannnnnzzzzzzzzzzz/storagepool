@@ -26,6 +26,7 @@ interface StorageRepository {
     ): Flow<UploadStatus>
 
     suspend fun deleteFile(fileId: String, bucketId: String, filePath: String): Result<Unit>
+    suspend fun deleteBucket(bucketId: String): Result<Unit>
 
     suspend fun downloadFile(file: CloudFile): Result<ByteArray>
     suspend fun generateShareUrl(file: CloudFile): Result<String>

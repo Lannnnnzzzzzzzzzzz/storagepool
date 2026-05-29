@@ -83,6 +83,8 @@ fun DashboardScreen(
     var selectedFileForActions by remember { mutableStateOf<CloudFile?>(null) }
     var activeFileForDownload by remember { mutableStateOf<CloudFile?>(null) }
     var isFabExpanded by remember { mutableStateOf(false) }
+    var bucketToDelete by remember { mutableStateOf<StorageBucket?>(null) }
+    var folderToDelete by remember { mutableStateOf<String?>(null) }
 
     val fileSaveLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("*/*")
@@ -304,7 +306,8 @@ fun DashboardScreen(
                 item {
                     BucketsAllocationPanel(
                         state = state,
-                        onRegisterBucket = { showRegisterBucketDialog = true }
+                        onRegisterBucket = { showRegisterBucketDialog = true },
+                        onDeleteBucket = { bucketToDelete = it }
                     )
                 }
 
@@ -346,24 +349,43 @@ fun DashboardScreen(
                                         .weight(1f)
                                         .background(CardGreySurface, RoundedCornerShape(10.dp))
                                         .border(1.dp, BorderDark, RoundedCornerShape(10.dp))
-                                        .clickable { viewModel.navigateTo(folder) }
-                                        .padding(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .padding(start = 12.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.FolderOpen,
-                                        contentDescription = "Virtual Directory Folder",
-                                        tint = CyberTeal,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        text = folder,
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = PureWhite,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable { viewModel.navigateTo(folder) }
+                                            .padding(vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.FolderOpen,
+                                            contentDescription = "Virtual Directory Folder",
+                                            tint = CyberTeal,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = folder,
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = PureWhite,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { folderToDelete = folder },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Hapus Folder",
+                                            tint = NeonPink,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
                             if (chunk.size < columns) {
@@ -606,6 +628,116 @@ fun DashboardScreen(
                                 showCreateFolderDialog = false
                                 newFolderName = ""
                             }
+                        ) {
+                            Text("Batal", color = TextMuted)
+                        }
+                    }
+                )
+            }
+
+            bucketToDelete?.let { bucket ->
+                AlertDialog(
+                    onDismissRequest = { bucketToDelete = null },
+                    containerColor = DeepGreySurface,
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Peringatan",
+                                tint = NeonPink,
+                                modifier = Modifier.size(28.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                text = "Hapus Node Penyimpanan?",
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    color = PureWhite,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    },
+                    text = {
+                        Column {
+                            Text(
+                                text = "Apakah Anda yakin ingin menghapus node '${bucket.bucketName}'? Tindakan ini akan menghapus konfigurasi node dari registry pool virtual.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = PureWhite,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                            Text(
+                                text = "Catatan Penting:\n1. Semua riwayat rekaman berkas di dalam database yang terhubung ke node ini akan ikut terhapus (Cascade Delete).\n2. Objek berkas fisik biner aktual di R2 Anda tetap aman dan tidak akan dimodifikasi.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextMuted
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                viewModel.deleteBucket(bucket.id)
+                                bucketToDelete = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = NeonPink),
+                            modifier = Modifier.testTag("confirm_delete_bucket_button")
+                        ) {
+                            Text("Hapus Node", color = PureWhite, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { bucketToDelete = null }
+                        ) {
+                            Text("Batal", color = TextMuted)
+                        }
+                    }
+                )
+            }
+
+            folderToDelete?.let { folderName ->
+                AlertDialog(
+                    onDismissRequest = { folderToDelete = null },
+                    containerColor = DeepGreySurface,
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Folder,
+                                contentDescription = "Folder",
+                                tint = NeonPink,
+                                modifier = Modifier.size(28.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                text = "Hapus Folder Rekursif?",
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    color = PureWhite,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    },
+                    text = {
+                        Text(
+                            text = "Apakah Anda yakin ingin menghapus folder '$folderName' beserta seluruh seluruh isi berkas dan subfolder di dalamnya secara rekursif?",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = PureWhite
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                viewModel.deleteFolder(folderName)
+                                folderToDelete = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = NeonPink),
+                            modifier = Modifier.testTag("confirm_delete_folder_button")
+                        ) {
+                            Text("Hapus Semua", color = PureWhite, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { folderToDelete = null }
                         ) {
                             Text("Batal", color = TextMuted)
                         }
@@ -1036,12 +1168,41 @@ fun DashboardScreen(
                             )
 
                             if (registerError != null) {
-                                Text(
-                                    text = registerError!!,
-                                    color = NeonPink,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(top = 4.dp)
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(NeonPink.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                                        .border(1.dp, NeonPink.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                                        .padding(12.dp)
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ErrorOutline,
+                                                contentDescription = "Peringatan Validasi",
+                                                tint = NeonPink,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Text(
+                                                text = "Verifikasi Koneksi Gagal",
+                                                style = MaterialTheme.typography.bodyMedium.copy(
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontFamily = FontFamily.Monospace
+                                                ),
+                                                color = NeonPink
+                                            )
+                                        }
+
+                                        Text(
+                                            text = registerError!!,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = PureWhite.copy(alpha = 0.95f)
+                                        )
+                                    }
+                                }
                             }
                         }
                     },
@@ -1191,7 +1352,11 @@ fun AggregatePoolStatsCard(state: DashboardState) {
 }
 
 @Composable
-fun BucketsAllocationPanel(state: DashboardState, onRegisterBucket: () -> Unit) {
+fun BucketsAllocationPanel(
+    state: DashboardState,
+    onRegisterBucket: () -> Unit,
+    onDeleteBucket: (StorageBucket) -> Unit
+) {
     var isExpanded by remember { mutableStateOf(false) }
 
     Card(
@@ -1283,6 +1448,20 @@ fun BucketsAllocationPanel(state: DashboardState, onRegisterBucket: () -> Unit) 
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextMuted,
                                     modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.width(10.dp))
+                            
+                            IconButton(
+                                onClick = { onDeleteBucket(bucket) },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Hapus Node",
+                                    tint = NeonPink,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
