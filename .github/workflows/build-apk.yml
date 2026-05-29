@@ -27,12 +27,21 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
+      - name: Decode Debug Keystore
+        run: |
+          if [ -f "debug.keystore.base64" ]; then
+            echo "Decoding debug.keystore..."
+            base64 -d debug.keystore.base64 > debug.keystore
+          else
+            echo "debug.keystore.base64 not found!"
+          fi
+
       - name: Build Debug APK
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL || 'https://placeholder-project.supabase.co' }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'placeholderKey' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || 'placeholderKey' }}
-        run: gradle assembleDebug --stacktrace
+        run: gradle assembleDebug --no-configuration-cache --stacktrace
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
