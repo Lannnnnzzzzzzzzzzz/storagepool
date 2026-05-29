@@ -638,7 +638,93 @@ fun DashboardScreen(
                             Spacer(modifier = Modifier.height(12.dp))
                             Text("Opsi Transmisi & Bagikan:", color = ElectricCyan, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
 
-                            // 1. Download decrypted file
+                            // 1. Unduh & Buka Berkas Langsung
+                            Button(
+                                onClick = {
+                                    viewModel.downloadAndOpenFile(
+                                        file = file,
+                                        context = context,
+                                        onSuccess = { uri, mime ->
+                                            try {
+                                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                                    setDataAndType(uri, mime)
+                                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                context.startActivity(intent)
+                                            } catch (e: Exception) {
+                                                android.widget.Toast.makeText(context, "Tidak ada aplikasi untuk membuka file ini. Silakan unduh pembaca file bersesuaian.", android.widget.Toast.LENGTH_LONG).show()
+                                            }
+                                        },
+                                        onError = { err ->
+                                            android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_LONG).show()
+                                        }
+                                    )
+                                    selectedFileForActions = null
+                                },
+                                modifier = Modifier.fillMaxWidth().testTag("dialog_download_open_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan.copy(alpha = 0.25f)),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Visibility,
+                                        contentDescription = "Buka File Langsung",
+                                        tint = ElectricCyan,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(horizontalAlignment = Alignment.Start) {
+                                        Text("Unduh & Buka Berkas", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                        Text("Dekripsi, unduh otomatis, dan lihat kontennya langsung", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
+                                    }
+                                }
+                            }
+
+                            // 2. Simpan ke Galeri Foto (Pictures / Movies) — only for photos & videos
+                            if (file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/")) {
+                                Button(
+                                    onClick = {
+                                        viewModel.saveToGallery(
+                                            file = file,
+                                            context = context,
+                                            onSuccess = { msg ->
+                                                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                                            },
+                                            onError = { err ->
+                                                android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_LONG).show()
+                                            }
+                                        )
+                                        selectedFileForActions = null
+                                    },
+                                    modifier = Modifier.fillMaxWidth().testTag("dialog_save_to_gallery_button"),
+                                    colors = ButtonDefaults.buttonColors(containerColor = CyberTeal.copy(alpha = 0.25f)),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Image,
+                                            contentDescription = "Simpan ke Galeri",
+                                            tint = CyberTeal,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(horizontalAlignment = Alignment.Start) {
+                                            Text("Simpan ke Galeri Foto", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                            Text("Dekripsi & ekspor gambar/video ini agar muncul di Galeri HP", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 3. Download decrypted file via Document Picker (SAF)
                             Button(
                                 onClick = {
                                     activeFileForDownload = file
@@ -646,7 +732,7 @@ fun DashboardScreen(
                                     selectedFileForActions = null
                                 },
                                 modifier = Modifier.fillMaxWidth().testTag("dialog_download_decrypted_button"),
-                                colors = ButtonDefaults.buttonColors(containerColor = CyberTeal.copy(alpha = 0.2f)),
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberTeal.copy(alpha = 0.12f)),
                                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
@@ -656,19 +742,19 @@ fun DashboardScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.ArrowDownward,
-                                        contentDescription = "Simpan File Secara Lokal",
-                                        tint = ElectricCyan,
+                                        contentDescription = "Simpan Manual",
+                                        tint = TextMuted,
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column(horizontalAlignment = Alignment.Start) {
-                                        Text("Simpan File (Unduh)", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
-                                        Text("Simpan file terdekripsi langsung ke folder Downloads Anda", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
+                                        Text("Ekspor File Manual", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                        Text("Pilih sendiri lokasi penyimpanan folder untuk berkas ini", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
                                     }
                                 }
                             }
 
-                            // 2. Share downloaded decrypted actual attachment file content
+                            // 4. Share downloaded decrypted actual attachment file content
                             Button(
                                 onClick = {
                                     viewModel.shareDecryptedFileDirectly(
@@ -680,7 +766,7 @@ fun DashboardScreen(
                                                 putExtra(android.content.Intent.EXTRA_STREAM, uri)
                                                 addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                             }
-                                            context.startActivity(android.content.Intent.createChooser(shareIntent, "Bagikan File '${file.filename}'"))
+                                            context.startActivity(android.content.Intent.createChooser(shareIntent, "Bagikan Berkas '${file.filename}'"))
                                         },
                                         onError = { err ->
                                             android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_LONG).show()
@@ -705,13 +791,13 @@ fun DashboardScreen(
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column(horizontalAlignment = Alignment.Start) {
-                                        Text("Bagikan Konten File", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
-                                        Text("Kirim file terdekripsi langsung ke WhatsApp/Email", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
+                                        Text("Bagikan Konten Berkas (WhatsApp/Email)", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                        Text("Kirim berkas versi UN-ENCRYPTED langsung ke teman Anda", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
                                     }
                                 }
                             }
 
-                            // 3. Share temporary link
+                            // 5. Share temporary link
                             Button(
                                 onClick = {
                                     viewModel.generateShareUrl(
@@ -753,8 +839,8 @@ fun DashboardScreen(
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column(horizontalAlignment = Alignment.Start) {
-                                        Text("Bagikan Tautan Unduh", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
-                                        Text("Buat link aman dari cluster privat berdurasi 7 hari", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
+                                        Text("Bagikan Tautan Unduh Langsung (7 Hari)", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                        Text("Buat link awan S3/R2 terenkripsi (sangat aman, berlaku 7 hari)", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
                                     }
                                 }
                             }

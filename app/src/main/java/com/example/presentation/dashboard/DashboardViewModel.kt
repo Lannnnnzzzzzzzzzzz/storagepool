@@ -638,4 +638,124 @@ class DashboardViewModel(
             }
         }
     }
+
+    // Unduh, dekripsi, simpan ke berkas sementara & langsung buka lewat Intent ACTION_VIEW
+    fun downloadAndOpenFile(
+        file: CloudFile,
+        context: android.content.Context,
+        onSuccess: (android.net.Uri, String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            if (isDemoMode) {
+                delay(1200)
+                try {
+                    val tempDir = java.io.File(context.cacheDir, "shared_temp")
+                    if (!tempDir.exists()) tempDir.mkdirs()
+                    val cacheFile = java.io.File(tempDir, file.filename)
+                    if (file.mimeType.startsWith("image/")) {
+                        cacheFile.writeText("Simulated Decrypted Image Content")
+                    } else {
+                        cacheFile.writeText("Simulated Decrypted file content.")
+                    }
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        "com.example.fileprovider",
+                        cacheFile
+                    )
+                    _state.value = _state.value.copy(isLoading = false)
+                    onSuccess(uri, file.mimeType)
+                } catch (e: Exception) {
+                    _state.value = _state.value.copy(isLoading = false)
+                    onError("Demo view error: ${e.message}")
+                }
+                return@launch
+            }
+
+            val result = storageRepository.downloadFile(file)
+            _state.value = _state.value.copy(isLoading = false)
+            if (result.isSuccess) {
+                val bytes = result.getOrThrow()
+                try {
+                    val tempDir = java.io.File(context.cacheDir, "shared_temp")
+                    if (!tempDir.exists()) tempDir.mkdirs()
+                    val tempFile = java.io.File(tempDir, file.filename)
+                    tempFile.writeBytes(bytes)
+
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        "com.example.fileprovider",
+                        tempFile
+                    )
+                    onSuccess(uri, file.mimeType)
+                } catch (e: Exception) {
+                    onError("Gagal menyiapkan penampil berkas: ${e.message}")
+                }
+            } else {
+                onError("Gagal mengunduh berkas: ${result.exceptionOrNull()?.message}")
+            }
+        }
+    }
+
+    // Simpan gambar/video ke Galeri Publik (MediaStore) agar langsung terdeteksi di galeri HP/emulator
+    fun saveToGallery(
+        file: CloudFile,
+        context: android.content.Context,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (!file.mimeType.startsWith("image/") && !file.mimeType.startsWith("video/")) {
+            onError("Bukan berkas media (foto/video). Gunakan opsi 'Simpan File (Unduh)' untuk berkas ini.")
+            return
+        }
+
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            if (isDemoMode) {
+                delay(1200)
+                _state.value = _state.value.copy(isLoading = false)
+                onSuccess("Foto '${file.filename}' berhasil disimpan ke Galeri!")
+                return@launch
+            }
+
+            val result = storageRepository.downloadFile(file)
+            _state.value = _state.value.copy(isLoading = false)
+            if (result.isSuccess) {
+                val bytes = result.getOrThrow()
+                try {
+                    val resolver = context.contentResolver
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, file.filename)
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, file.mimeType)
+                        if (file.mimeType.startsWith("image/")) {
+                            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/StoragePool")
+                        } else {
+                            put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_MOVIES + "/StoragePool")
+                        }
+                    }
+
+                    val baseUri = if (file.mimeType.startsWith("image/")) {
+                        android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    } else {
+                        android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    }
+
+                    val uri = resolver.insert(baseUri, contentValues)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri)?.use { out ->
+                            out.write(bytes)
+                        }
+                        onSuccess("Berhasil menyimpan '${file.filename}' ke Galeri Foto!")
+                    } else {
+                        onError("Gagal membuat entri MediaStore.")
+                    }
+                } catch (e: Exception) {
+                    onError("Gagal memproses berkas media: ${e.message}")
+                }
+            } else {
+                onError("Gagal mengunduh berkas: ${result.exceptionOrNull()?.message}")
+            }
+        }
+    }
 }
