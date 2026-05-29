@@ -352,6 +352,92 @@ class StorageRepositoryImpl : StorageRepository {
         return totalPayload
     }
 
+    override suspend fun downloadFile(file: CloudFile): Result<ByteArray> = withContext(Dispatchers.IO) {
+        try {
+            val bucketsResult = fetchBuckets()
+            if (bucketsResult.isFailure) {
+                return@withContext Result.failure(Exception("Gagal mengambil konfigurasi node pool: ${bucketsResult.exceptionOrNull()?.message}"))
+            }
+            val bucket = bucketsResult.getOrDefault(emptyList()).find { it.id == file.bucketId }
+                ?: return@withContext Result.failure(Exception("Node pool penyimpanan (ID: ${file.bucketId}) tidak ditemukan!"))
+
+            val getUrl = S3Signer.generatePresignedUrl(
+                endpoint = bucket.endpoint,
+                bucketName = bucket.bucketName,
+                filePath = file.filePath,
+                accessKeyId = bucket.accessKeyId,
+                secretAccessKey = bucket.secretAccessKey,
+                expiresSeconds = 3600,
+                method = "GET"
+            )
+
+            val request = Request.Builder().url(getUrl).build()
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                return@withContext Result.failure(Exception("Koneksi ditolak oleh node pool S3/R2 (HTTP ${response.code}: ${response.message})"))
+            }
+
+            val bodyBytes = response.body?.bytes() ?: return@withContext Result.failure(Exception("Konten data kosong"))
+
+            if (file.isEncrypted) {
+                try {
+                    val decrypted = decryptBytes(bodyBytes)
+                    Result.success(decrypted)
+                } catch (decEx: Exception) {
+                    Result.failure(Exception("Dekripsi gagal. Sesi sinkronisasi tidak valid atau file rusak. Detail: ${decEx.message}"))
+                }
+            } else {
+                Result.success(bodyBytes)
+            }
+        } catch (e: Exception) {
+            Log.e("StorageRepository", "downloadFile exception: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun generateShareUrl(file: CloudFile): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val bucketsResult = fetchBuckets()
+            if (bucketsResult.isFailure) {
+                return@withContext Result.failure(Exception("Gagal memuat node pool: ${bucketsResult.exceptionOrNull()?.message}"))
+            }
+            val bucket = bucketsResult.getOrDefault(emptyList()).find { it.id == file.bucketId }
+                ?: return@withContext Result.failure(Exception("Node pool untuk file tidak ditemukan"))
+
+            val expiresSeconds = 604800L // 7 Hari
+            val shareUrl = S3Signer.generatePresignedUrl(
+                endpoint = bucket.endpoint,
+                bucketName = bucket.bucketName,
+                filePath = file.filePath,
+                accessKeyId = bucket.accessKeyId,
+                secretAccessKey = bucket.secretAccessKey,
+                expiresSeconds = expiresSeconds,
+                method = "GET"
+            )
+            Result.success(shareUrl)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun decryptBytes(encryptedBytes: ByteArray): ByteArray {
+        val rawKey = SupabaseClient.supabaseAnonKey.take(16).padEnd(16, 'x').toByteArray(Charsets.UTF_8)
+        val secretKeySpec = SecretKeySpec(rawKey, KEY_ALGORITHM)
+        val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+        
+        if (encryptedBytes.size < 16) {
+            throw Exception("Payload enkripsi tidak valid")
+        }
+        val iv = ByteArray(16)
+        System.arraycopy(encryptedBytes, 0, iv, 0, 16)
+        val ivSpec = IvParameterSpec(iv)
+        
+        cipher.init(Cipher.DECRYPT_MODE, secretKeySpec, ivSpec)
+        val contentBytes = ByteArray(encryptedBytes.size - 16)
+        System.arraycopy(encryptedBytes, 16, contentBytes, 0, contentBytes.size)
+        return cipher.doFinal(contentBytes)
+    }
+
     // Custom Streaming RequestBody to track progress elegantly
     private class StreamingRequestBody(
         private val contentType: okhttp3.MediaType?,

@@ -195,8 +195,14 @@ fun AuthScreen(
             // Action Status Messages
             AnimatedVisibility(visible = uiState is AuthUiState.Error) {
                 val errorMsg = (uiState as? AuthUiState.Error)?.message ?: ""
+                val isJwtExpired = errorMsg.contains("JWT expired", ignoreCase = true) || errorMsg.contains("PGRST303", ignoreCase = true)
+                val displayMsg = if (isJwtExpired) {
+                    "Autentikasi gagal (JWT expired):\nKunci anonim Supabase (SUPABASE_ANON_KEY) yang terkonfigurasi di Secrets tab atau .env terdeteksi telah kedaluwarsa atau tidak valid. Silakan periksa kembali kredensial proyek Supabase Anda."
+                } else {
+                    errorMsg
+                }
                 Text(
-                    text = errorMsg,
+                    text = displayMsg,
                     color = NeonPink,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(bottom = 16.dp),

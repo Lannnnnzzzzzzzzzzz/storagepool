@@ -80,6 +80,29 @@ fun DashboardScreen(
         }
     }
 
+    var selectedFileForActions by remember { mutableStateOf<CloudFile?>(null) }
+    var activeFileForDownload by remember { mutableStateOf<CloudFile?>(null) }
+
+    val fileSaveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("*/*")
+    ) { uri: Uri? ->
+        val fileToDownload = activeFileForDownload
+        if (uri != null && fileToDownload != null) {
+            viewModel.downloadFileToUri(
+                file = fileToDownload,
+                context = context,
+                targetUri = uri,
+                onSuccess = { msg ->
+                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                },
+                onError = { err ->
+                    android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_LONG).show()
+                }
+            )
+        }
+        activeFileForDownload = null
+    }
+
     LaunchedEffect(Unit) {
         viewModel.setDemoMode(isDemoMode)
     }
@@ -348,6 +371,7 @@ fun DashboardScreen(
                         FileItemCard(
                             file = file,
                             allocatedBucketName = targetBucketName,
+                            onClick = { selectedFileForActions = file },
                             onDelete = {
                                 viewModel.deleteFile(file.id, file.bucketId, file.filePath, file.fileSize)
                             }
@@ -372,22 +396,57 @@ fun DashboardScreen(
 
             // Exception/Error Alert Dialog integration
             if (state.error != null) {
+                val errorText = state.error ?: ""
+                val isJwtExpired = errorText.contains("JWT expired", ignoreCase = true) || errorText.contains("PGRST303", ignoreCase = true)
+
                 AlertDialog(
                     onDismissRequest = { viewModel.clearError() },
                     title = { Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.ErrorOutline, contentDescription = "Error Logo", tint = NeonPink)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("System Synchronization Notice", color = PureWhite)
+                        Text(if (isJwtExpired) "Sesi Autentikasi Berakhir" else "System Synchronization Notice", color = PureWhite)
                     }},
-                    text = { Text(state.error ?: "", color = TextPrimary) },
+                    text = { 
+                        Text(
+                            text = if (isJwtExpired) {
+                                "Koneksi ke cluster database Supabase terputus karena token sesi login Anda telah kedaluwarsa (JWT expired).\n\n" +
+                                "Sesi login Supabase secara default berakhir dalam 1 jam demi alasan keamanan. Silakan klik 'Keluar & Hubungkan Ulang' di bawah ini untuk masuk kembali dan memperbarui sesi Anda."
+                            } else {
+                                errorText
+                            },
+                            color = TextPrimary
+                        )
+                    },
                     confirmButton = {
-                        TextButton(
-                            onClick = { viewModel.clearError() },
-                            modifier = Modifier.testTag("dismiss_error_button")
-                        ) {
-                            Text("Dismiss", color = ElectricCyan)
+                        if (isJwtExpired) {
+                            Button(
+                                onClick = {
+                                    viewModel.clearError()
+                                    onSignOut()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan),
+                                modifier = Modifier.testTag("sign_out_expired_button")
+                            ) {
+                                Text("Keluar & Hubungkan Ulang", color = Color(0xFF381E72), fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            TextButton(
+                                onClick = { viewModel.clearError() },
+                                modifier = Modifier.testTag("dismiss_error_button")
+                            ) {
+                                Text("Dismiss", color = ElectricCyan)
+                            }
                         }
                     },
+                    dismissButton = if (isJwtExpired) {
+                        {
+                            TextButton(
+                                onClick = { viewModel.clearError() }
+                            ) {
+                                Text("Batal", color = TextMuted)
+                            }
+                        }
+                    } else null,
                     containerColor = DeepGreySurface,
                     tonalElevation = 6.dp
                 )
@@ -503,6 +562,223 @@ fun DashboardScreen(
                             Text("Batal", color = TextMuted)
                         }
                     }
+                )
+            }
+
+            selectedFileForActions?.let { file ->
+                val targetBucketName = state.buckets.find { it.id == file.bucketId }?.bucketName ?: "Unknown Bucket"
+                AlertDialog(
+                    onDismissRequest = { selectedFileForActions = null },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = getMimeTypeIcon(file.mimeType),
+                                contentDescription = "Tipe File Icon",
+                                tint = ElectricCyan,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Transmisi & Kelola File",
+                                color = PureWhite,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = file.filename,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = PureWhite,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+
+                            Divider(color = BorderDark, modifier = Modifier.padding(vertical = 4.dp))
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Ukuran:", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
+                                Text(formatFileSize(file.fileSize), color = PureWhite, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            }
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Tipe Mime:", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
+                                Text(file.mimeType, color = PureWhite, style = MaterialTheme.typography.bodyMedium)
+                            }
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Target Node Pool:", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
+                                Text(targetBucketName, color = CyberTeal, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            }
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Enkripsi Klien AES:", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (file.isEncrypted) {
+                                        Icon(
+                                            imageVector = Icons.Default.VerifiedUser,
+                                            contentDescription = "Encrypted On",
+                                            tint = ElectricCyan,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Klien Aktif", color = ElectricCyan, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                    } else {
+                                        Text("Tidak Aktif", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text("Opsi Transmisi & Bagikan:", color = ElectricCyan, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
+
+                            // 1. Download decrypted file
+                            Button(
+                                onClick = {
+                                    activeFileForDownload = file
+                                    fileSaveLauncher.launch(file.filename)
+                                    selectedFileForActions = null
+                                },
+                                modifier = Modifier.fillMaxWidth().testTag("dialog_download_decrypted_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberTeal.copy(alpha = 0.2f)),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDownward,
+                                        contentDescription = "Simpan File Secara Lokal",
+                                        tint = ElectricCyan,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(horizontalAlignment = Alignment.Start) {
+                                        Text("Simpan File (Unduh)", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                        Text("Simpan file terdekripsi langsung ke folder Downloads Anda", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
+                                    }
+                                }
+                            }
+
+                            // 2. Share downloaded decrypted actual attachment file content
+                            Button(
+                                onClick = {
+                                    viewModel.shareDecryptedFileDirectly(
+                                        file = file,
+                                        context = context,
+                                        onSuccess = { uri, mime ->
+                                            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                type = mime
+                                                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            context.startActivity(android.content.Intent.createChooser(shareIntent, "Bagikan File '${file.filename}'"))
+                                        },
+                                        onError = { err ->
+                                            android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_LONG).show()
+                                        }
+                                    )
+                                    selectedFileForActions = null
+                                },
+                                modifier = Modifier.fillMaxWidth().testTag("dialog_share_file_content_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan.copy(alpha = 0.15f)),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Bagikan File Sebenarnya",
+                                        tint = ElectricCyan,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(horizontalAlignment = Alignment.Start) {
+                                        Text("Bagikan Konten File", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                        Text("Kirim file terdekripsi langsung ke WhatsApp/Email", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
+                                    }
+                                }
+                            }
+
+                            // 3. Share temporary link
+                            Button(
+                                onClick = {
+                                    viewModel.generateShareUrl(
+                                        file = file,
+                                        onSuccess = { url ->
+                                            // Copy link to clipboard
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                            val clip = android.content.ClipData.newPlainText("Presigned Sharing Link", url)
+                                            clipboard.setPrimaryClip(clip)
+                                            android.widget.Toast.makeText(context, "Link disalin! Berlaku selama 7 hari.", android.widget.Toast.LENGTH_LONG).show()
+
+                                            // Open Share Dialog
+                                            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(android.content.Intent.EXTRA_TEXT, "Halo! Berikut adalah tautan aman untuk mengunduh berkas '${file.filename}' dari StoragePool (aktif selama 7 hari):\n\n$url")
+                                            }
+                                            context.startActivity(android.content.Intent.createChooser(intent, "Bagikan Link Unduh"))
+                                        },
+                                        onError = { err ->
+                                            android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_LONG).show()
+                                        }
+                                    )
+                                    selectedFileForActions = null
+                                },
+                                modifier = Modifier.fillMaxWidth().testTag("dialog_share_link_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberTeal.copy(alpha = 0.15f)),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Salin Tautan",
+                                        tint = CyberTeal,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(horizontalAlignment = Alignment.Start) {
+                                        Text("Bagikan Tautan Unduh", color = PureWhite, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                        Text("Buat link aman dari cluster privat berdurasi 7 hari", color = TextMuted, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp))
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = { selectedFileForActions = null }
+                        ) {
+                            Text("Tutup", color = ElectricCyan, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = {
+                                viewModel.deleteFile(file.id, file.bucketId, file.filePath, file.fileSize)
+                                selectedFileForActions = null
+                            }
+                        ) {
+                            Text("Hapus Berkas", color = NeonPink, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    containerColor = DeepGreySurface,
+                    tonalElevation = 6.dp
                 )
             }
 
@@ -1012,12 +1288,14 @@ fun FolderBreadcrumbRow(
 fun FileItemCard(
     file: CloudFile,
     allocatedBucketName: String,
+    onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .border(1.dp, BorderDark, RoundedCornerShape(10.dp))
+            .clickable { onClick() }
             .testTag("file_item_card_${file.id}"),
         colors = CardDefaults.cardColors(containerColor = CardGreySurface)
     ) {

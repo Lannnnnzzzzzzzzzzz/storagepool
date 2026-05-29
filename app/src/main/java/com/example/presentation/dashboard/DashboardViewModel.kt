@@ -512,4 +512,130 @@ class DashboardViewModel(
     fun clearError() {
         _state.value = _state.value.copy(error = null)
     }
+
+    // Direct local download of decrypted storage pool content
+    fun downloadFileToUri(
+        file: CloudFile,
+        context: android.content.Context,
+        targetUri: android.net.Uri,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            if (isDemoMode) {
+                delay(1200)
+                try {
+                    context.contentResolver.openOutputStream(targetUri)?.use { out ->
+                        val sampleContent = "Simulated File Download:\nName : ${file.filename}\nEncrypted : ${file.isEncrypted}\nSize : ${file.fileSize} bytes"
+                        out.write(sampleContent.toByteArray())
+                    }
+                    _state.value = _state.value.copy(isLoading = false)
+                    onSuccess("File '${file.filename}' berhasil diunduh via Demo-Simulasi!")
+                } catch (e: Exception) {
+                    _state.value = _state.value.copy(isLoading = false)
+                    onError("Demo download error: ${e.message}")
+                }
+                return@launch
+            }
+
+            val result = storageRepository.downloadFile(file)
+            _state.value = _state.value.copy(isLoading = false)
+            if (result.isSuccess) {
+                val bytes = result.getOrThrow()
+                try {
+                    context.contentResolver.openOutputStream(targetUri)?.use { out ->
+                        out.write(bytes)
+                    }
+                    onSuccess("Berhasil mengunduh '${file.filename}'")
+                } catch (e: Exception) {
+                    onError("Gagal menyimpan file ke lokasi: ${e.message}")
+                }
+            } else {
+                onError("Gagal mengunduh file: ${result.exceptionOrNull()?.message}")
+            }
+        }
+    }
+
+    // Generate secure 7-day presigned direct S3/R2 sharing link
+    fun generateShareUrl(
+        file: CloudFile,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            if (isDemoMode) {
+                delay(800)
+                _state.value = _state.value.copy(isLoading = false)
+                onSuccess("https://demo-node-pool.r2.cloudflarestorage.com/${file.bucketId}/${file.filePath}?X-Amz-Signature=demo-sig-123")
+                return@launch
+            }
+
+            val result = storageRepository.generateShareUrl(file)
+            _state.value = _state.value.copy(isLoading = false)
+            if (result.isSuccess) {
+                onSuccess(result.getOrThrow())
+            } else {
+                onError("Gagal membuat link berbagi: ${result.exceptionOrNull()?.message}")
+            }
+        }
+    }
+
+    // Direct decrypted File Attachment sharing via System Share sheet
+    fun shareDecryptedFileDirectly(
+        file: CloudFile,
+        context: android.content.Context,
+        onSuccess: (android.net.Uri, String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            if (isDemoMode) {
+                delay(1200)
+                try {
+                    val tempDir = java.io.File(context.cacheDir, "shared_temp")
+                    if (!tempDir.exists()) tempDir.mkdirs()
+                    val cacheFile = java.io.File(tempDir, file.filename)
+                    cacheFile.writeText("Simulated Decrypted File Content for '${file.filename}'")
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        "com.example.fileprovider",
+                        cacheFile
+                    )
+                    _state.value = _state.value.copy(isLoading = false)
+                    onSuccess(uri, file.mimeType)
+                } catch (e: Exception) {
+                    _state.value = _state.value.copy(isLoading = false)
+                    onError("Demo sharing error: ${e.message}")
+                }
+                return@launch
+            }
+
+            val result = storageRepository.downloadFile(file)
+            _state.value = _state.value.copy(isLoading = false)
+            if (result.isSuccess) {
+                val bytes = result.getOrThrow()
+                try {
+                    val cacheDirFile = java.io.File(context.cacheDir, "shared_temp")
+                    if (!cacheDirFile.exists()) {
+                        cacheDirFile.mkdirs()
+                    }
+                    val tempFile = java.io.File(cacheDirFile, file.filename)
+                    tempFile.writeBytes(bytes)
+
+                    val shareUri = androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        "com.example.fileprovider",
+                        tempFile
+                    )
+                    onSuccess(shareUri, file.mimeType)
+                } catch (e: Exception) {
+                    onError("Gagal memproses file untuk dibagikan: ${e.message}")
+                }
+            } else {
+                onError("Gagal mengunduh file untuk dibagikan: ${result.exceptionOrNull()?.message}")
+            }
+        }
+    }
 }
