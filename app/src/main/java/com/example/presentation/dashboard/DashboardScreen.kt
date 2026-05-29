@@ -82,6 +82,7 @@ fun DashboardScreen(
 
     var selectedFileForActions by remember { mutableStateOf<CloudFile?>(null) }
     var activeFileForDownload by remember { mutableStateOf<CloudFile?>(null) }
+    var isFabExpanded by remember { mutableStateOf(false) }
 
     val fileSaveLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("*/*")
@@ -183,50 +184,83 @@ fun DashboardScreen(
             if (!state.isUploading) {
                 Column(
                     horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.padding(bottom = 16.dp, end = 8.dp)
                 ) {
-                    // Create Folder Button
-                    ExtendedFloatingActionButton(
-                        onClick = { showCreateFolderDialog = true },
-                        modifier = Modifier.testTag("floating_create_folder_button"),
-                        containerColor = DeepGreySurface,
-                        contentColor = ElectricCyan,
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Default.Folder,
-                                contentDescription = "Buat Folder",
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        text = {
-                            Text(
-                                text = "Buat Folder",
-                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
-                            )
-                        }
-                    )
+                    // 1. Create Folder Sub-Button (Shown when expanded)
+                    AnimatedVisibility(
+                        visible = isFabExpanded,
+                        enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
+                        exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut()
+                    ) {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                isFabExpanded = false
+                                showCreateFolderDialog = true
+                            },
+                            modifier = Modifier.testTag("floating_create_folder_button"),
+                            containerColor = DeepGreySurface,
+                            contentColor = ElectricCyan,
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.Folder,
+                                    contentDescription = "Buat Folder",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            text = {
+                                Text(
+                                    text = "Buat Folder Baru",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        )
+                    }
 
-                    // Upload File Button
-                    ExtendedFloatingActionButton(
-                        onClick = { documentPickerLauncher.launch("*/*") },
-                        modifier = Modifier.testTag("floating_upload_picker_button"),
-                        containerColor = ElectricCyan,
-                        contentColor = Color(0xFF381E72),
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Default.FileUpload,
-                                contentDescription = "Import Binary File",
-                                modifier = Modifier.size(22.dp)
-                            )
-                        },
-                        text = {
-                            Text(
-                                text = "Upload File",
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                            )
-                        }
-                    )
+                    // 2. Upload File Sub-Button (Shown when expanded)
+                    AnimatedVisibility(
+                        visible = isFabExpanded,
+                        enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
+                        exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut()
+                    ) {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                isFabExpanded = false
+                                documentPickerLauncher.launch("*/*")
+                            },
+                            modifier = Modifier.testTag("floating_upload_picker_button"),
+                            containerColor = ElectricCyan,
+                            contentColor = Color(0xFF101010),
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.FileUpload,
+                                    contentDescription = "Upload File",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            text = {
+                                Text(
+                                    text = "Upload Berkas Baru",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        )
+                    }
+
+                    // 3. Primary trigger FAB (Always visible)
+                    FloatingActionButton(
+                        onClick = { isFabExpanded = !isFabExpanded },
+                        modifier = Modifier.testTag("floating_main_trigger_fab"),
+                        containerColor = if (isFabExpanded) NeonPink else ElectricCyan,
+                        contentColor = if (isFabExpanded) PureWhite else Color(0xFF101010),
+                        shape = CircleShape
+                    ) {
+                        Icon(
+                            imageVector = if (isFabExpanded) Icons.Default.Close else Icons.Default.Add,
+                            contentDescription = "Menu Aksi",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
         }
@@ -238,6 +272,20 @@ fun DashboardScreen(
                 .background(ObsidianBg),
             contentAlignment = Alignment.TopCenter
         ) {
+            // Beautiful, smooth dim overlay when Speed Dial FAB is active
+            AnimatedVisibility(
+                visible = isFabExpanded,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .clickable { isFabExpanded = false }
+                )
+            }
+
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -379,7 +427,7 @@ fun DashboardScreen(
                     }
                 }
 
-                item { Spacer(modifier = Modifier.height(80.dp)) } // Spacer for bottom overlay and FAB bounds
+                item { Spacer(modifier = Modifier.height(180.dp)) } // Spacer for bottom overlay and FAB bounds
             }
 
             // Real-Time Upload Transmitting Overlay panel (With active progress, target, and automated failover alert)
